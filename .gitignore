@@ -59,3 +59,4 @@ neo4j_logs/
 .DS_Store
 Thumbs.db
 .trae/
+prd/
