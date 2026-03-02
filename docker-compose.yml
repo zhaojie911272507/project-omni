@@ -1,0 +1,19 @@
+services:
+  omni:
+    build: .
+    image: project-omni:latest
+    container_name: project-omni
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - OMNI_MODEL=${OMNI_MODEL:-gpt-4o-mini}
+    restart: unless-stopped
+    # Health check via /health endpoint
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

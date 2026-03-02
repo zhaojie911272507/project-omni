@@ -106,6 +106,28 @@ def my_tool(arg1: str) -> str:
 
 **流式回复体验**：收到消息后，Agent 先发送「⏳ Thinking...」占位消息，推理完成后原地更新为最终答案，模拟流式推送效果。
 
+### Docker 部署
+
+```bash
+# 1. 配置环境变量
+cp .env.example .env
+# 编辑 .env 填入 API Key、WeCom/Feishu 等配置
+
+# 2. 构建并启动
+docker compose up -d
+
+# 3. 查看日志
+docker compose logs -f omni
+```
+
+服务监听 `http://0.0.0.0:8000`，健康检查端点 `/health`。
+
+如需运行 CLI 模式而非网关：
+
+```bash
+docker compose run --rm -it omni python main.py
+```
+
 ### 本地开发调试
 
 如果没有公网域名，可使用 ngrok 暴露本地端口：
