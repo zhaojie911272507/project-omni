@@ -28,6 +28,7 @@ log = logging.getLogger("omni.cli")
 import tools  # noqa: E402, F401 — side-effect: registers built-in tools
 from agent import Agent, tool_names  # noqa: E402
 
+# Import additional tool modules (optional)
 _browser_ok = False
 try:
     import tools_browser  # noqa: F401
@@ -35,6 +36,46 @@ try:
     _browser_ok = True
 except Exception:  # noqa: BLE001
     log.debug("Browser tool not available")
+
+_file_ok = False
+try:
+    import tools_file  # noqa: F401
+
+    _file_ok = True
+except Exception:  # noqa: BLE001
+    log.debug("File tools not available")
+
+_rag_ok = False
+try:
+    import tools_rag  # noqa: F401
+
+    _rag_ok = True
+except Exception:  # noqa: BLE001
+    log.debug("RAG tools not available")
+
+_voice_ok = False
+try:
+    import tools_voice  # noqa: F401
+
+    _voice_ok = True
+except Exception:  # noqa: BLE001
+    log.debug("Voice tools not available")
+
+_sandbox_ok = False
+try:
+    import tools_sandbox  # noqa: F401
+
+    _sandbox_ok = True
+except Exception:  # noqa: BLE001
+    log.debug("Sandbox tools not available")
+
+_mcp_ok = False
+try:
+    import mcp_client  # noqa: F401
+
+    _mcp_ok = True
+except Exception:  # noqa: BLE001
+    log.debug("MCP tools not available")
 
 
 # ── Pretty CLI callbacks ─────────────────────────────────────────────────────
@@ -64,9 +105,17 @@ async def main() -> None:
     print(f"🤖 Project Omni (model: {model})")
     print(f"   Tools: {', '.join(names)}")
     if not _browser_ok:
-        print(
-            "   ⚠  browser tool unavailable (pip install playwright && playwright install chromium)"
-        )
+        print("   ⚠  browser tool unavailable (pip install playwright && playwright install chromium)")
+    if not _file_ok:
+        print("   ⚠  file tools unavailable (pip install pymupdf pandas Pillow)")
+    if not _rag_ok:
+        print("   ⚠  RAG tools unavailable (pip install chromadb langchain)")
+    if not _voice_ok:
+        print("   ⚠  voice tools unavailable (pip install edge-tts openai-whisper)")
+    if not _sandbox_ok:
+        print("   ⚠  sandbox tools unavailable")
+    if not _mcp_ok:
+        print("   ⚠  MCP tools unavailable (pip install mcp)")
     print("   Type 'exit' to quit, '/clear' to reset context.\n")
 
     while True:
@@ -84,6 +133,18 @@ async def main() -> None:
         if user_input == "/clear":
             agent.reset()
             print("(context cleared)\n")
+            continue
+        if user_input == "/tools":
+            print(f"\nAvailable tools: {', '.join(tool_names())}\n")
+            continue
+        if user_input == "/help":
+            print("""
+Commands:
+  /clear   - Clear conversation context
+  /tools   - List available tools
+  /help    - Show this help
+  exit     - Exit the program
+            """)
             continue
 
         reply = await agent.chat(user_input, on_tool=_on_tool, on_thought=_on_thought)

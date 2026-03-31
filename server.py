@@ -2,6 +2,7 @@
 
 Receives messages from IM webhooks, forwards them to the ReAct Agent,
 and pushes replies back via each platform's send-message API.
+Also provides REST API and SSE for Web UI.
 
 Usage:
     uvicorn server:app --reload --port 8000
@@ -17,6 +18,7 @@ import logging
 import os
 import struct
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,6 +27,8 @@ import httpx
 from Crypto.Cipher import AES
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
+from sse_starlette.sse import Event
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -34,8 +38,24 @@ load_dotenv()
 import tools  # noqa: E402, F401
 from agent import Agent  # noqa: E402
 
+# Import additional tool modules (optional)
 with contextlib.suppress(Exception):
     import tools_browser  # noqa: F401
+with contextlib.suppress(Exception):
+    import tools_file  # noqa: F401
+with contextlib.suppress(Exception):
+    import tools_rag  # noqa: F401
+with contextlib.suppress(Exception):
+    import tools_voice  # noqa: F401
+with contextlib.suppress(Exception):
+    import tools_sandbox  # noqa: F401
+with contextlib.suppress(Exception):
+    import mcp_client  # noqa: F401
+
+try:
+    from memory import get_memory_store  # noqa: E402
+except ImportError:
+    get_memory_store = None
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Logging Configuration
@@ -511,3 +531,402 @@ async def _handle_feishu_message(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "project-omni"}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Web UI - SSE & REST API
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+async def _stream_agent_response(
+    user_input: str,
+    session_id: str,
+    platform: str = "web",
+    user_id: str | None = None,
+) -> tuple[str, list[dict]]:
+    """Run agent and yield chunks for SSE."""
+    agent = _get_agent(session_id)
+    tool_calls_history: list[dict] = []
+
+    async def on_tool(name: str, args: dict, result: str) -> None:
+        tool_calls_history.append({"name": name, "args": args, "result": result[:500]})
+
+    # Run agent with streaming callback
+    reply = await agent.chat(
+        user_input,
+        on_tool=on_tool,
+    )
+    return reply, tool_calls_history
+
+
+@app.get("/api/chat/stream")
+@limiter.limit(f"{max_requests}/{period}")
+async def chat_stream(
+    request: Request,
+    message: str = Query(..., description="User message"),
+    session_id: str = Query(default=None, description="Session ID"),
+    model: str = Query(default=None, description="Model to use"),
+) -> StreamingResponse:
+    """SSE endpoint for streaming chat responses."""
+    # Generate session ID if not provided
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
+    # Create agent with optional model override
+    if model:
+        agent = Agent(model=model)
+    else:
+        agent = _get_agent(session_id)
+
+    async def event_generator():
+        # Send session info first
+        yield Event(data=_json.dumps({"type": "session", "session_id": session_id}))
+
+        # Send "thinking" status
+        yield Event(data=_json.dumps({"type": "status", "content": "thinking"}))
+
+        # Run agent
+        tool_calls_history: list[dict] = []
+
+        async def on_tool(name: str, args: dict, result: str) -> None:
+            yield Event(
+                data=_json.dumps(
+                    {
+                        "type": "tool",
+                        "name": name,
+                        "args": args,
+                        "result": result[:500] if len(result) > 500 else result,
+                    }
+                )
+            )
+
+        try:
+            reply = await agent.chat(
+                message,
+                on_tool=on_tool,
+            )
+            # Send final response
+            yield Event(data=_json.dumps({"type": "message", "content": reply}))
+        except Exception as exc:  # noqa: BLE001
+            log.error("Chat error: %s", exc)
+            yield Event(
+                data=_json.dumps({"type": "error", "content": f"Error: {exc}"})
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "none",
+        },
+    )
+
+
+@app.post("/api/chat")
+@limiter.limit(f"{max_requests}/{period}")
+async def chat(request: Request) -> JSONResponse:
+    """REST endpoint for chat (non-streaming)."""
+    body = await request.json()
+    message = body.get("message", "")
+    session_id = body.get("session_id", str(uuid.uuid4()))
+    model = body.get("model")
+
+    if not message:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "message is required"},
+        )
+
+    # Create agent with optional model override
+    if model:
+        agent = Agent(model=model)
+    else:
+        agent = _get_agent(session_id)
+
+    try:
+        reply = await agent.chat(message)
+        return JSONResponse(
+            content={
+                "reply": reply,
+                "session_id": session_id,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("Chat error: %s", exc)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(exc)},
+        )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────────────────
+#  Conversations API
+# ━━━━━━━━━━━━━━━━━──────────────────────────────────────────────────────────
+
+
+@app.get("/api/conversations")
+async def list_conversations(
+    platform: str | None = None,
+    limit: int = 50,
+) -> JSONResponse:
+    """List conversation history."""
+    if get_memory_store is None:
+        return JSONResponse(
+            content={"error": "Memory store not available"},
+            status_code=503,
+        )
+
+    store = get_memory_store()
+    try:
+        convos = await store.list_conversations(platform=platform, limit=limit)
+        return JSONResponse(
+            content={
+                "conversations": [
+                    {
+                        "id": c.id,
+                        "session_id": c.session_id,
+                        "platform": c.platform,
+                        "user_id": c.user_id,
+                        "title": c.title,
+                        "message_count": c.message_count,
+                        "created_at": c.created_at.isoformat(),
+                        "updated_at": c.updated_at.isoformat(),
+                    }
+                    for c in convos
+                ]
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/conversations/{conversation_id}")
+async def get_conversation(conversation_id: int) -> JSONResponse:
+    """Get a conversation and its messages."""
+    if get_memory_store is None:
+        return JSONResponse(
+            content={"error": "Memory store not available"},
+            status_code=503,
+        )
+
+    store = get_memory_store()
+    try:
+        convo = await store.get_conversation(conversation_id)
+        if convo is None:
+            return JSONResponse(
+                content={"error": "Conversation not found"},
+                status_code=404,
+            )
+        messages = await store.get_messages(conversation_id)
+        return JSONResponse(
+            content={
+                "conversation": {
+                    "id": convo.id,
+                    "session_id": convo.session_id,
+                    "platform": convo.platform,
+                    "user_id": convo.user_id,
+                    "title": convo.title,
+                    "created_at": convo.created_at.isoformat(),
+                    "updated_at": convo.updated_at.isoformat(),
+                },
+                "messages": messages,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: int) -> JSONResponse:
+    """Delete a conversation."""
+    if get_memory_store is None:
+        return JSONResponse(
+            content={"error": "Memory store not available"},
+            status_code=503,
+        )
+
+    store = get_memory_store()
+    try:
+        await store.delete_conversation(conversation_id)
+        return JSONResponse(content={"status": "deleted"})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  User Preferences API
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━──
+
+
+@app.get("/api/preferences/{user_id}")
+async def get_preferences(user_id: str) -> JSONResponse:
+    """Get user preferences."""
+    if get_memory_store is None:
+        return JSONResponse(
+            content={"error": "Memory store not available"},
+            status_code=503,
+        )
+
+    store = get_memory_store()
+    try:
+        prefs = await store.get_all_preferences(user_id)
+        return JSONResponse(content={"preferences": prefs})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/preferences/{user_id}")
+async def set_preference(
+    request: Request,
+    user_id: str,
+    key: str = Query(...),
+) -> JSONResponse:
+    """Set a user preference."""
+    if get_memory_store is None:
+        return JSONResponse(
+            content={"error": "Memory store not available"},
+            status_code=503,
+        )
+
+    body = await request.json()
+    value = body.get("value")
+
+    store = get_memory_store()
+    try:
+        await store.set_preference(user_id, key, value)
+        return JSONResponse(content={"status": "saved"})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Tools & Models Info
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+@app.get("/api/tools")
+async def list_tools() -> JSONResponse:
+    """List available tools."""
+    from agent import tool_names
+
+    return JSONResponse(content={"tools": tool_names()})
+
+
+@app.get("/api/models")
+async def list_models() -> JSONResponse:
+    """List available models (from LiteLLM)."""
+    # This would need litellm to fetch model list
+    default_model = os.getenv("OMNI_MODEL", "gpt-4o-mini")
+    return JSONResponse(
+        content={
+            "default": default_model,
+            "note": "Configure OMNI_MODEL in .env. LiteLLM supports many providers.",
+        }
+    )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  IM Platforms - Telegram, Slack, Discord
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Import IM platform manager (optional)
+try:
+    from im_platforms import get_im_manager
+    _im_manager_available = True
+except ImportError:
+    _im_manager_available = False
+
+
+@app.post("/webhook/telegram")
+@limiter.limit(f"{max_requests}/{period}")
+async def telegram_webhook(request: Request) -> JSONResponse:
+    """Telegram bot webhook."""
+    if not _im_manager_available:
+        return JSONResponse(
+            content={"error": "IM platforms not configured"},
+            status_code=503,
+        )
+
+    try:
+        update = await request.json()
+    except Exception:
+        return JSONResponse(content={"error": "Invalid JSON"}, status_code=400)
+
+    manager = get_im_manager()
+    try:
+        result = await manager.handle_telegram(update)
+        return JSONResponse(content=result)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Telegram webhook error: %s", exc)
+        return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+
+@app.post("/webhook/slack")
+@limiter.limit(f"{max_requests}/{period}")
+async def slack_webhook(request: Request) -> JSONResponse:
+    """Slack bot webhook."""
+    if not _im_manager_available:
+        return JSONResponse(
+            content={"error": "IM platforms not configured"},
+            status_code=503,
+        )
+
+    # Verify Slack signature (if configured)
+    signature = request.headers.get("X-Slack-Signature", "")
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    body = await request.body()
+
+    # Note: In production, verify the signature here
+
+    try:
+        event = await request.json()
+    except Exception:
+        return JSONResponse(content={"error": "Invalid JSON"}, status_code=400)
+
+    # Handle URL verification challenge
+    if event.get("type") == "url_verification":
+        return JSONResponse(content={"challenge": event.get("challenge")})
+
+    # Handle events
+    if event.get("type") == "event_callback":
+        manager = get_im_manager()
+        try:
+            result = await manager.handle_slack(event.get("event", {}))
+            return JSONResponse(content=result)
+        except Exception as exc:  # noqa: BLE001
+            log.error("Slack webhook error: %s", exc)
+            return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/webhook/discord")
+@limiter.limit(f"{max_requests}/{period}")
+async def discord_webhook(request: Request) -> JSONResponse:
+    """Discord bot webhook."""
+    if not _im_manager_available:
+        return JSONResponse(
+            content={"error": "IM platforms not configured"},
+            status_code=503,
+        )
+
+    # Verify Discord signature (if configured)
+    signature = request.headers.get("X-Signature-Ed25519", "")
+    timestamp = request.headers.get("X-Signature-Timestamp", "")
+
+    # Note: In production, verify the signature here
+
+    try:
+        interaction = await request.json()
+    except Exception:
+        return JSONResponse(content={"error": "Invalid JSON"}, status_code=400)
+
+    manager = get_im_manager()
+    try:
+        result = await manager.handle_discord(interaction)
+        return JSONResponse(content=result)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Discord webhook error: %s", exc)
+        return JSONResponse(content={"error": str(exc)}, status_code=500)
