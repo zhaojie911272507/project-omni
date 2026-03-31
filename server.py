@@ -6,9 +6,11 @@ and pushes replies back via each platform's send-message API.
 Usage:
     uvicorn server:app --reload --port 8000
 """
+
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json as _json
 import logging
@@ -26,14 +28,11 @@ from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
 
 load_dotenv()
 
+import tools  # noqa: E402, F401
 from agent import Agent  # noqa: E402
 
-import tools  # noqa: E402, F401
-
-try:
+with contextlib.suppress(Exception):
     import tools_browser  # noqa: F401
-except Exception:  # noqa: BLE001
-    pass
 
 log = logging.getLogger("omni.gateway")
 
@@ -173,22 +172,18 @@ def _extract_xml_field(xml_str: str, tag: str) -> str:
     return el.text or "" if el is not None else ""
 
 
-_wecom_client: WeComClient | None = None
-_wecom_crypto: WeComCrypto | None = None
-
-
 def _get_wecom_crypto() -> WeComCrypto:
-    global _wecom_crypto
-    if _wecom_crypto is None:
-        _wecom_crypto = WeComCrypto.from_env()
-    return _wecom_crypto
+    """Lazy initialization with closure cache."""
+    if not hasattr(_get_wecom_crypto, "_cache"):
+        _get_wecom_crypto._cache = WeComCrypto.from_env()  # type: ignore[attr-defined]
+    return _get_wecom_crypto._cache  # type: ignore[attr-defined]
 
 
 def _get_wecom_client() -> WeComClient:
-    global _wecom_client
-    if _wecom_client is None:
-        _wecom_client = WeComClient()
-    return _wecom_client
+    """Lazy initialization with closure cache."""
+    if not hasattr(_get_wecom_client, "_cache"):
+        _get_wecom_client._cache = WeComClient()  # type: ignore[attr-defined]
+    return _get_wecom_client._cache  # type: ignore[attr-defined]
 
 
 @app.get("/webhook/wecom")
@@ -285,7 +280,10 @@ class FeishuClient:
 
     async def _headers(self) -> dict[str, str]:
         token = await self._ensure_token()
-        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        }
 
     async def send_text(self, chat_id: str, text: str) -> str:
         """Send a text message, return message_id for later updates."""
@@ -341,15 +339,14 @@ class FeishuClient:
         return data.get("data", {}).get("message_id", "")
 
 
-_feishu_client: FeishuClient | None = None
 _feishu_seen_events: dict[str, float] = {}  # event_id -> timestamp for dedup
 
 
 def _get_feishu_client() -> FeishuClient:
-    global _feishu_client
-    if _feishu_client is None:
-        _feishu_client = FeishuClient()
-    return _feishu_client
+    """Lazy initialization with closure cache."""
+    if not hasattr(_get_feishu_client, "_cache"):
+        _get_feishu_client._cache = FeishuClient()  # type: ignore[attr-defined]
+    return _get_feishu_client._cache  # type: ignore[attr-defined]
 
 
 def _feishu_dedup(event_id: str) -> bool:

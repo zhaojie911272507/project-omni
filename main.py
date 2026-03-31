@@ -6,6 +6,7 @@ Usage:
     python main.py deepseek/deepseek-chat   # use DeepSeek via LiteLLM
     python main.py ollama/llama3    # local model via Ollama
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,9 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from agent import Agent, tool_names  # noqa: E402
-
 import tools  # noqa: E402, F401 — side-effect: registers built-in tools
+from agent import Agent, tool_names  # noqa: E402
 
 _browser_ok = False
 try:
@@ -55,7 +55,9 @@ async def main() -> None:
     print(f"🤖 Project Omni (model: {model})")
     print(f"   Tools: {', '.join(names)}")
     if not _browser_ok:
-        print("   ⚠  browser tool unavailable (pip install playwright && playwright install chromium)")
+        print(
+            "   ⚠  browser tool unavailable (pip install playwright && playwright install chromium)"
+        )
     print("   Type 'exit' to quit, '/clear' to reset context.\n")
 
     while True:

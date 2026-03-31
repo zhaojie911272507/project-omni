@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source .venv/bin/activate)",
+      "Bash(pip install:*)",
+      "Bash(pytest tests/ -v --tb=short)",
+      "Bash(ruff check:*)",
+      "Bash(ruff format:*)",
+      "Bash(pre-commit run:*)",
+      "Bash(pytest tests/ -v)",
+      "Bash(yamllint .github/workflows/ci.yml)",
+      "Bash(mypy:*)",
+      "Bash(.venv/bin/mypy . --ignore-missing-imports --no-strict-optional 2>&1)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/pytest tests/ -v 2>&1)",
+      "Bash(.venv/bin/python -c \"from tools import shell_exec; print\\(shell_exec\\('echo hello | cat'\\)\\)\" 2>&1)",
+      "Bash(.venv/bin/python -c \"from tools import shell_exec; print\\(shell_exec\\('ls -la'\\)\\)\" 2>&1)",
+      "Bash(.venv/bin/pytest tests/test_tools.py -v 2>&1)",
+      "Bash(.venv/bin/ruff check:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

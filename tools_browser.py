@@ -5,6 +5,7 @@ anti-scraping measures. Search engine: DuckDuckGo HTML (lightweight, no JS).
 
 Install:  pip install playwright && playwright install chromium
 """
+
 from __future__ import annotations
 
 import urllib.parse
@@ -55,9 +56,7 @@ async def browser_search_and_extract(query: str, max_results: int = 3) -> str:
         page = await ctx.new_page()
 
         # ── Step 1: Search via DuckDuckGo HTML (no JS needed) ─────────────
-        search_url = (
-            f"https://html.duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}"
-        )
+        search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}"
         await page.goto(search_url, wait_until="domcontentloaded", timeout=15_000)
 
         raw_links: list[str] = await page.eval_on_selector_all(

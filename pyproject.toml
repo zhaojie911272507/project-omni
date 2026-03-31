@@ -1,0 +1,150 @@
+[project]
+name = "project-omni"
+version = "0.1.0"
+description = "全天候、多终端接入的个人专属 AI Agent"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Zhaojie" }
+]
+keywords = ["ai", "agent", "react", "llm", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# Dependencies from requirements.txt
+dependencies = [
+    "litellm>=1.40.0",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.111.0",
+    "uvicorn>=0.30.0",
+    "httpx>=0.27.0",
+    "pycryptodome>=3.20.0",
+    "playwright>=1.44.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhaojie/project-omni"
+Repository = "https://github.com/zhaojie/project-omni"
+
+# Entry points
+[project.scripts]
+omni = "main:main"
+
+# Build system
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Ruff configuration
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "BLE",    # flake8-blind-except
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults (FastAPI uses this)
+    "B028",   # no explicit stacklevel in warnings
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # unused imports in __init__
+"tests/*" = ["S101", "TC003"]  # assert allowed in tests, Path needed for fixtures
+"server.py" = ["TCH"]     # type checking exemptions
+"agent.py" = ["TCH"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent", "tools", "server", "main"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+# Mypy configuration
+[tool.mypy]
+python_version = "3.11"
+strict = false  # Start with less strict mode for existing code
+warn_return_any = false
+warn_unused_ignores = true
+disallow_untyped_defs = false  # Existing code lacks type hints
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+show_error_codes = true
+exclude = ["^\\.venv/", "^build/", "^dist/"]
+
+[[tool.mypy.overrides]]
+module = [
+    "litellm",
+    "playwright.*",
+]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    ".venv/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

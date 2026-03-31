@@ -3,13 +3,15 @@
 Lightweight agent built on LiteLLM with a decorator-based tool registry.
 No heavy framework dependencies; just async function calling in a loop.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import litellm
 
@@ -174,8 +176,6 @@ class Agent:
                 result = await execute_tool(fn_name, fn_args)
                 if on_tool:
                     on_tool(fn_name, fn_args, result)
-                self.history.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": result}
-                )
+                self.history.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
         return "⚠️ Reached maximum reasoning rounds without a final answer."
