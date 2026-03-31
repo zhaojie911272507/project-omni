@@ -25,6 +25,9 @@ import httpx
 from Crypto.Cipher import AES
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 load_dotenv()
 
@@ -34,13 +37,35 @@ from agent import Agent  # noqa: E402
 with contextlib.suppress(Exception):
     import tools_browser  # noqa: F401
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Logging Configuration
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 log = logging.getLogger("omni.gateway")
+log.setLevel(os.getenv("LOG_LEVEL", "INFO"))
+
+if not log.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    log.addHandler(handler)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Shared helpers
+#  Rate Limiting
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+limiter = Limiter(key_func=get_remote_address)
+max_requests = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "10"))
+period = int(os.getenv("RATE_LIMIT_PERIOD", "60"))
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  FastAPI App
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 app = FastAPI(title="Project Omni Gateway")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 _sessions: dict[str, Agent] = {}
 
@@ -195,11 +220,13 @@ async def wecom_verify(
 ) -> Response:
     crypto = _get_wecom_crypto()
     if not crypto.verify(msg_signature, timestamp, nonce, echostr):
+        log.warning("WeCom signature mismatch")
         return Response("signature mismatch", status_code=403)
     return Response(crypto.decrypt(echostr), media_type="text/plain")
 
 
 @app.post("/webhook/wecom")
+@limiter.limit(f"{max_requests}/{period}")
 async def wecom_receive(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -230,12 +257,17 @@ async def wecom_receive(
 
 
 async def _handle_wecom_message(user_id: str, content: str) -> None:
+    """Process a WeCom message and send reply."""
     agent = _get_agent(f"wecom:{user_id}")
     try:
         reply = await agent.chat(content)
     except Exception as exc:  # noqa: BLE001
+        log.error("Agent error for WeCom message: %s", exc)
         reply = f"⚠️ Agent error: {exc}"
-    await _get_wecom_client().send_text(user_id, reply)
+    try:
+        await _get_wecom_client().send_text(user_id, reply)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Failed to send WeCom reply: %s", exc)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -363,11 +395,13 @@ def _feishu_dedup(event_id: str) -> bool:
 
 
 @app.post("/webhook/feishu")
+@limiter.limit(f"{max_requests}/{period}")
 async def feishu_receive(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
     raw = await request.json()
+    log.debug("Received Feishu webhook: %s", raw.get("header", {}).get("event_type", "unknown"))
 
     # ── Encrypted events ──────────────────────────────────────────────────
     if "encrypt" in raw:
@@ -447,13 +481,18 @@ async def _handle_feishu_message(
     client = _get_feishu_client()
 
     # Step 1 — send placeholder
-    placeholder_id = await client.reply_text(user_msg_id, "⏳ Thinking...")
+    try:
+        placeholder_id = await client.reply_text(user_msg_id, "⏳ Thinking...")
+    except Exception as exc:  # noqa: BLE001
+        log.error("Failed to send Feishu placeholder: %s", exc)
+        placeholder_id = ""
 
     # Step 2 — run agent
     agent = _get_agent(f"feishu:{sender_id}")
     try:
         reply = await agent.chat(text)
     except Exception as exc:  # noqa: BLE001
+        log.error("Agent error for Feishu message: %s", exc)
         reply = f"⚠️ Agent error: {exc}"
 
     # Step 3 — update placeholder with final answer (streaming feel)

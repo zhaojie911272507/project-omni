@@ -10,11 +10,20 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("omni.cli")
 
 import tools  # noqa: E402, F401 — side-effect: registers built-in tools
 from agent import Agent, tool_names  # noqa: E402
@@ -25,7 +34,7 @@ try:
 
     _browser_ok = True
 except Exception:  # noqa: BLE001
-    pass
+    log.debug("Browser tool not available")
 
 
 # ── Pretty CLI callbacks ─────────────────────────────────────────────────────

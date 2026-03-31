@@ -17,7 +17,16 @@
       "Bash(.venv/bin/python -c \"from tools import shell_exec; print\\(shell_exec\\('ls -la'\\)\\)\" 2>&1)",
       "Bash(.venv/bin/pytest tests/test_tools.py -v 2>&1)",
       "Bash(.venv/bin/ruff check:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(.venv/bin/pip index:*)",
+      "Bash(.venv/bin/pip show:*)",
+      "Bash(wc -l *.py tests/*.py)",
+      "Bash(.venv/bin/pip list:*)",
+      "Bash(.venv/bin/pytest tests/test_server.py -v 2>&1)",
+      "Bash(.venv/bin/pytest tests/test_tools_browser.py -v 2>&1)",
+      "Bash(.venv/bin/mypy . --ignore-missing-imports --no-strict-optional)"
     ]
   }
 }
