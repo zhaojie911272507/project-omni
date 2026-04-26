@@ -60,3 +60,9 @@ neo4j_logs/
 Thumbs.db
 .trae/
 prd/
+
+.claude/
+.cursor/
+
+# Node (web UI)
+node_modules/
